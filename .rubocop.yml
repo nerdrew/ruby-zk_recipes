@@ -1,0 +1,12 @@
+AllCops:
+  TargetRubyVersion: 2.4
+  DisplayCopNames: true
+
+Lint/RescueException:
+  Enabled: false
+
+Metrics:
+  Enabled: false
+
+Style:
+  Enabled: false
