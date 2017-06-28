@@ -2,7 +2,6 @@
 
 require "active_support/notifications"
 require "concurrent"
-require "forwardable"
 require "zk"
 
 require "zk_recipes/version"

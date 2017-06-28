@@ -4,12 +4,10 @@ module ZkRecipes
   class Cache
     class Error < StandardError; end
 
-    extend Forwardable
-
     AS_NOTIFICATION_UPDATE = "zk_recipes.cache.update"
     AS_NOTIFICATION_ERROR = "zk_recipes.cache.error"
 
-    def initialize(host: nil, logger: nil, timeout: nil, zk_opts: {})
+    def initialize(logger: nil, host: nil, timeout: nil, zk_opts: {})
       @cache = Concurrent::Map.new
       @latch = Concurrent::CountDownLatch.new
       @logger = logger
@@ -84,7 +82,11 @@ module ZkRecipes
 
       @zk.on_exception do |e|
         error("on_exception exception=#{e.inspect} backtrace=#{e.backtrace.inspect}")
-        ActiveSupport::Notifications.instrument(AS_NOTIFICATION_ERROR, error: e)
+        begin
+          ActiveSupport::Notifications.instrument(AS_NOTIFICATION_ERROR, error: e)
+        rescue Exception => e
+          error("on_exception ActiveSupport::Notifications subscriber exception=#{e.inspect} backtrace=#{e.backtrace.inspect}")
+        end
       end
     end
 

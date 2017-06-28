@@ -28,7 +28,7 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
       z = ZK.new("localhost:#{ZK_PORT}", connect: false)
       cache = ZkRecipes::Cache.new
       cache.setup_callbacks(z)
-      expect(Benchmark.realtime { cache.wait_for_warm_cache(5) } > 5).to be(true)
+      expect(Benchmark.realtime { cache.wait_for_warm_cache(5) } >= 5).to be(true)
       expect(z.connected?).to be(false)
     end
   end
