@@ -77,6 +77,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
       # child
       logger.debug("child reopen")
       zk_proxy.reopen
+      cache.reopen
 
       # exit successfully if an update is received
       ActiveSupport::Notifications.subscribe("zk_recipes.cache.update") do |*_args|
@@ -84,6 +85,8 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
         logger.debug("child succeeded pid=#{Process.pid}")
         exit!(0)
       end
+
+      almost_there { expect(cache["/test/boom"]).to eq(@expected_version) }
 
       sleep 10
       warn "child failed pid=#{Process.pid} "\

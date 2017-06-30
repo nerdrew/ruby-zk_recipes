@@ -142,74 +142,100 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
     end
   end
 
-  describe "reopen after fork" do
-    let!(:cache) do
-      cache = ZkRecipes::Cache.new(logger: logger)
-      cache.register("/test/boom", "goat")
-      cache.register("/test/foo", 1) { |raw_value| raw_value.to_i * 2 }
-      cache.setup_callbacks(zk_cache)
-      zk_cache.connect
-      cache.wait_for_warm_cache(5)
-      cache
-    end
+  if Process.respond_to?(:fork)
+    describe "reopen after fork", proxy: true, throttle_bytes_per_sec: 50 do
+      let(:host) { "localhost:#{PROXY_PORT}" }
 
-    let(:zk_cache) do
-      ZK.new("localhost:#{ZK_PORT}", connect: false, timeout: 5).tap do |z|
-        z.on_exception { |e| zk_cache_exceptions << e.class }
-      end
-    end
-
-    let(:zk) do
-      ZK.new("localhost:#{ZK_PORT}").tap do |z|
-        z.on_exception { |e| zk_exceptions << e.class }
-      end
-    end
-
-    let(:zk_cache_exceptions) { Set.new }
-    let(:zk_exceptions) { Set.new }
-
-    after do
-      zk.close!
-      cache.close!
-      zk_cache.close!
-    end
-
-    it "works" do
-      child_pid = fork
-      if child_pid
-        # parent
-        begin
-          expect(cache["/test/boom"]).to eq("goat")
-          expect(cache["/test/foo"]).to eq(1)
-          zk.create("/test/boom")
-          zk.set("/test/boom", "cat")
-          almost_there { expect(cache["/test/boom"]).to eq("cat") }
-          zk.create("/test/foo")
-          zk.set("/test/foo", "1")
-          almost_there { expect(cache["/test/foo"]).to eq(2) }
-
-          _, status = Process.wait2(child_pid)
-          expect(status.exitstatus).to eq(0) # exitstatus == 0 => tests passed in child
-        rescue
-          Process.wait(child_pid) rescue nil
-          raise
+      context "with external ZK client" do
+        let!(:cache) do
+          cache = ZkRecipes::Cache.new(logger: logger)
+          cache.register("/test/boom", "goat")
+          cache.setup_callbacks(zk_cache)
+          zk_cache.connect
+          cache.wait_for_warm_cache(5)
+          cache
         end
-        raise "zk_cache_exceptions=#{zk_cache_exceptions.inspect}" unless zk_cache_exceptions.empty?
-        raise "zk_exceptions=#{zk_exceptions.inspect}" unless zk_exceptions.empty?
-      else
-        # child
-        begin
-          zk_cache.reopen
-          expect(cache["/test/boom"]).to eq("goat")
-          expect(cache["/test/foo"]).to eq(1)
-          almost_there { expect(cache["/test/boom"]).to eq("cat") }
-          almost_there { expect(cache["/test/foo"]).to eq(2) }
-          raise "zk_cache_exceptions=#{zk_cache_exceptions.inspect}" unless zk_cache_exceptions.empty?
-          raise "zk_exceptions=#{zk_exceptions.inspect}" unless zk_exceptions.empty?
-          exit!(0)
-        rescue Exception => e
-          puts "child failed #{e}\n#{e.backtrace.join("\n")}"
-          exit!(1)
+
+        let(:zk_cache) do
+          ZK.new(host, connect: false, timeout: 5).tap do |z|
+            z.on_exception { |e| zk_cache_exceptions << e.class }
+          end
+        end
+        after { zk_cache.close! }
+
+        it "works" do
+          child_pid = fork
+          if child_pid
+            # parent
+            begin
+              zk.create("/test/boom")
+              zk.set("/test/boom", "cat")
+              almost_there { expect(cache["/test/boom"]).to eq("cat") }
+
+              _, status = Process.wait2(child_pid)
+              expect(status.exitstatus).to eq(0) # exitstatus == 0 => tests passed in child
+            rescue
+              Process.wait(child_pid) rescue nil
+              raise
+            end
+            raise "zk_cache_exceptions=#{zk_cache_exceptions.inspect}" unless zk_cache_exceptions.empty?
+            raise "zk_exceptions=#{zk_exceptions.inspect}" unless zk_exceptions.empty?
+          else
+            # child
+            begin
+              cache.reopen
+              zk_cache.reopen
+              expect(cache.wait_for_warm_cache(1)).to be(false)
+              expect(cache.wait_for_warm_cache(5)).to be(true)
+              expect(cache["/test/boom"]).to eq("cat")
+              raise "zk_cache_exceptions=#{zk_cache_exceptions.inspect}" unless zk_cache_exceptions.empty?
+              raise "zk_exceptions=#{zk_exceptions.inspect}" unless zk_exceptions.empty?
+              exit!(0)
+            rescue Exception => e
+              puts "child failed #{e}\n#{e.backtrace.join("\n")}"
+              exit!(1)
+            end
+          end
+        end
+      end
+
+      context "with internal ZK client (cache creates it's ZK client)" do
+        let!(:cache) do
+          ZkRecipes::Cache.new(host: host, logger: logger, timeout: 10, zk_opts: { timeout: 5 }) do |z|
+            z.register("/test/boom", "goat")
+          end
+        end
+
+        it "works" do
+          child_pid = fork
+          if child_pid
+            # parent
+            begin
+              zk.create("/test/boom")
+              zk.set("/test/boom", "cat")
+              almost_there { expect(cache["/test/boom"]).to eq("cat") }
+
+              _, status = Process.wait2(child_pid)
+              expect(status.exitstatus).to eq(0) # exitstatus == 0 => tests passed in child
+            rescue
+              Process.wait(child_pid) rescue nil
+              raise
+            end
+            raise "zk_cache_exceptions=#{zk_cache_exceptions.inspect}" unless zk_cache_exceptions.empty?
+            raise "zk_exceptions=#{zk_exceptions.inspect}" unless zk_exceptions.empty?
+          else
+            # child
+            begin
+              cache.reopen
+              expect(cache["/test/boom"]).to eq("cat")
+              raise "zk_cache_exceptions=#{zk_cache_exceptions.inspect}" unless zk_cache_exceptions.empty?
+              raise "zk_exceptions=#{zk_exceptions.inspect}" unless zk_exceptions.empty?
+              exit!(0)
+            rescue Exception => e
+              puts "child failed #{e}\n#{e.backtrace.join("\n")}"
+              exit!(1)
+            end
+          end
         end
       end
     end

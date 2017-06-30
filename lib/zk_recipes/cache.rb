@@ -20,9 +20,10 @@ module ZkRecipes
 
       if block_given?
         @owned_zk = true
+        @warm_cache_timeout = timeout || 30
         yield(self)
 
-        expiration = Time.now + (timeout || 30)
+        expiration = Time.now + @warm_cache_timeout
         connect(host, zk_opts)
 
         wait_for_warm_cache(expiration - Time.now)
@@ -91,10 +92,11 @@ module ZkRecipes
     end
 
     def wait_for_warm_cache(timeout = 30)
+      debug("waiting for cache to warm timeout=#{timeout}")
       if @latch.wait(timeout)
         true
       else
-        warn("didn't connect before timeout connected=#{@zk.connected?} timeout=#{timeout}")
+        warn("didn't warm cache before timeout connected=#{@zk.connected?} timeout=#{timeout}")
         false
       end
     end
@@ -103,6 +105,17 @@ module ZkRecipes
       @watches.each_value(&:unsubscribe)
       @watches.clear
       @zk.close! if @owned_zk
+    end
+
+    def reopen
+      @latch = Concurrent::CountDownLatch.new
+      @session_id = nil
+      @pending_updates.clear
+      if @owned_zk
+        expiration = Time.now + @warm_cache_timeout
+        @zk.reopen
+        wait_for_warm_cache(expiration - Time.now)
+      end
     end
 
     def fetch(path)

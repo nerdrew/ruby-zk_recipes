@@ -35,16 +35,66 @@ cache.close!
 
 ```ruby
 logger = Logger.new(STDERR)
-zk = ZK.new("my-host:1234", connect: false, timeout: 5) # ZK timeout = 5s
+zk = ZK.new("my-host:1234", connect: false)
+cache = ZkRecipes::Cache.new(logger: logger)
+cache.register("/test/boom", "goat") { |string| "Hello, #{string}" }
+cache.setup_callbacks(zk) # no more paths can be registered after this
+
+puts cache["/test/boom"] # => "Hello, goat"
+
+zk.connect
+cache.wait_for_warm_cache(10) # wait up to 10s for the cache to warm
+
+zk.create("/test/boom")
+zk.set("/test/boom", "cat")
+
+sleep 1
+
+puts cache["/test/boom"] # => "Hello, cat"
+cache.close!
+zk.close!
+```
+
+### Handling forks with a cache that creates it's own ZK client:
+
+```ruby
+zk = ZK.new("my-host:1234") # zk client for writing only
+
+logger = Logger.new(STDERR)
+cache = ZkRecipes::Cache.new(host: "my-host:1234", logger: logger, timeout: 10) do |z|
+  z.register("/test/boom", "goat")
+end
+
+
+puts cache["/test/boom"] # => "goat"
+
+if fork
+  # parent
+  zk.set("/test/boom", "mouse")
+  cache.close!
+  zk.close!
+else
+  # child
+  cache.reopen # wait up to 10s for ZK to reconnect and the cache to warm
+  puts cache["/test/boom"] # => "mouse"
+  cache.close!
+  zk.close!
+end
+```
+
+### Handling forks with an existing ZK client:
+
+```ruby
+logger = Logger.new(STDERR)
+zk = ZK.new("my-host:1234", connect: false)
 cache = ZkRecipes::Cache.new(logger: logger)
 cache.register("/test/boom", "goat")
-cache.register("/test/foo", 1) { |raw_value| raw_value.to_i * 2 }
 cache.setup_callbacks(zk) # no more paths can be registered after this
 
 puts cache["/test/boom"] # => "goat"
 
 zk.connect
-cache.wait_for_warm_cache(10) # wait 10s for the cache to warm
+cache.wait_for_warm_cache(10) # wait up to 10s for the cache to warm
 
 zk.create("/test/boom")
 zk.set("/test/boom", "cat")
@@ -52,8 +102,21 @@ zk.set("/test/boom", "cat")
 sleep 1
 
 puts cache["/test/boom"] # => "cat"
-cache.close!
-zk.close!
+
+if fork
+  # parent
+  zk.set("/test/boom", "mouse")
+  cache.close!
+  zk.close!
+else
+  # child
+  cache.reopen
+  zk.reopen
+  cache.wait_for_warm_cache(10) # wait up to 10s for the cache to warm again
+  puts cache["/test/boom"] # => "mouse"
+  cache.close!
+  zk.close!
+end
 ```
 
 ### ActiveSupport::Notifications
