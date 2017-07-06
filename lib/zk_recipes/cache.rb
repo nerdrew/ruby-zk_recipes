@@ -3,6 +3,7 @@
 module ZkRecipes
   class Cache
     class Error < StandardError; end
+    class PathError < Error; end
 
     AS_NOTIFICATION_UPDATE = "zk_recipes.cache.update"
     AS_NOTIFICATION_ERROR = "zk_recipes.cache.error"
@@ -120,12 +121,16 @@ module ZkRecipes
 
     def fetch(path)
       @cache.fetch(path).value
+    rescue KeyError
+      raise PathError, "no registered path for #{path.inspect}"
     end
     alias_method :[], :fetch
 
     def fetch_existing(path)
       cached = @cache.fetch(path)
       cached.value if cached.stat&.exists?
+    rescue KeyError
+      raise PathError, "no registered path=#{path.inspect}"
     end
 
     private

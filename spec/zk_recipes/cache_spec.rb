@@ -47,8 +47,8 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
       expect(cache.fetch("/test/boom")).to eq("goat")
     end
 
-    it "raises a KeyError for unregistered paths" do
-      expect { cache["/test/baz"] }.to raise_error KeyError
+    it "raises a PathError for unregistered paths" do
+      expect { cache["/test/baz"] }.to raise_error(described_class::PathError)
     end
   end
 
@@ -63,8 +63,8 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
       expect(cache.fetch_existing("/test/boom")).to be(nil)
     end
 
-    it "raises KeyError for unregistered paths" do
-      expect { cache.fetch_existing("/test/baz") }.to raise_error KeyError
+    it "raises PathError for unregistered paths" do
+      expect { cache.fetch_existing("/test/baz") }.to raise_error(described_class::PathError)
     end
   end
 
