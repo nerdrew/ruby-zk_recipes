@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe ZkRecipes::Cache, zookeeper: true do
-  let(:logger) { Logger.new(STDERR).tap { |l| l.level = ENV["ZK_DEBUG"] ? Logger::DEBUG : Logger::WARN } }
+  let(:logger) { Logger.new(STDERR).tap { |l| l.level = ENV["ZK_RECIPES_DEBUG"] ? Logger::DEBUG : Logger::WARN } }
   let(:host) { "localhost:#{ZK_PORT}" }
   let(:cache) do
     ZkRecipes::Cache.new(host: host, logger: logger, timeout: 10, zk_opts: { timeout: 5 }) do |z|
@@ -10,11 +10,19 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
     end
   end
 
-  let(:zk) { ZK.new("localhost:#{ZK_PORT}") }
+  let(:zk) do
+    ZK.new("localhost:#{ZK_PORT}").tap do |z|
+      z.on_exception { |e| zk_exceptions << e.class }
+    end
+  end
+  let(:zk_exceptions) { Set.new }
+  let(:zk_cache_exceptions) { Set.new }
 
   after do
     zk.close!
     cache.close!
+    expect(zk_exceptions.empty?).to be(true)
+    expect(zk_cache_exceptions.empty?).to be(true)
   end
 
   describe ".new" do
@@ -25,7 +33,7 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
     end
 
     it "sets up callbacks, waits for the cache to warm, but does not connect to ZK without a block" do
-      z = ZK.new("localhost:#{ZK_PORT}", connect: false)
+      z = ZK.new(host, connect: false)
       cache = ZkRecipes::Cache.new
       cache.setup_callbacks(z)
       expect(Benchmark.realtime { cache.wait_for_warm_cache(5) } >= 5).to be(true)
@@ -74,14 +82,15 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
   end
 
   context "with an external ZK client" do
-    let(:zk) { ZK.new("localhost:#{ZK_PORT}", connect: false) }
+    let(:zk_cache) { ZK.new(host, connect: false) }
+    after { zk_cache.close! }
 
     let(:cache) do
       cache = ZkRecipes::Cache.new(logger: logger)
       cache.register("/test/boom", "goat")
       cache.register("/test/foo", 1) { |raw_value| raw_value.to_i * 2 }
-      cache.setup_callbacks(zk)
-      zk.connect
+      cache.setup_callbacks(zk_cache)
+      zk_cache.connect
       cache
     end
 
