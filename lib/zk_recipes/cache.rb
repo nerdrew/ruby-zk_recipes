@@ -5,8 +5,7 @@ module ZkRecipes
     class Error < StandardError; end
     class PathError < Error; end
 
-    AS_NOTIFICATION_UPDATE = "zk_recipes.cache.update"
-    AS_NOTIFICATION_ERROR = "zk_recipes.cache.error"
+    AS_NOTIFICATION = "cache.zk_recipes"
 
     def initialize(logger: nil, host: nil, timeout: nil, zk_opts: {})
       @cache = Concurrent::Map.new
@@ -41,7 +40,7 @@ module ZkRecipes
       debug("added path=#{path} default_value=#{default_value.inspect}")
       @cache[path] = CachedPath.new(default_value)
       @registered_values[path] = RegisteredPath.new(default_value, block)
-      ActiveSupport::Notifications.instrument(AS_NOTIFICATION_UPDATE, path: path, value: default_value)
+      ActiveSupport::Notifications.instrument(AS_NOTIFICATION, path: path, value: default_value)
     end
 
     def setup_callbacks(zk)
@@ -84,11 +83,6 @@ module ZkRecipes
 
       @zk.on_exception do |e|
         error("on_exception exception=#{e.inspect} backtrace=#{e.backtrace.inspect}")
-        begin
-          ActiveSupport::Notifications.instrument(AS_NOTIFICATION_ERROR, error: e)
-        rescue Exception => e
-          error("on_exception ActiveSupport::Notifications subscriber exception=#{e.inspect} backtrace=#{e.backtrace.inspect}")
-        end
       end
     end
 
@@ -150,7 +144,6 @@ module ZkRecipes
 
       stat = @zk.stat(path, watch: true)
 
-      instrument_name = AS_NOTIFICATION_UPDATE
       instrument_params = { path: path }
 
       unless stat.exists?
@@ -158,17 +151,15 @@ module ZkRecipes
         @cache[path] = CachedPath.new(value, stat)
         debug("no node, setting watch path=#{path}")
         instrument_params[:value] = value
-        ActiveSupport::Notifications.instrument(instrument_name, instrument_params)
+        ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
         return true
       end
 
       raw_value, stat = @zk.get(path, watch: true)
 
-      instrument_params.merge!(
-        latency_seconds: Time.now - stat.mtime_t,
-        version: stat.version,
-        data_length: stat.data_length,
-      )
+      instrument_params[:latency_seconds] = Time.now - stat.mtime_t
+      instrument_params[:version] = stat.version
+      instrument_params[:data_length] = stat.data_length
 
       value = begin
         registered_value = @registered_values.fetch(path)
@@ -178,19 +169,19 @@ module ZkRecipes
           "deserialization error raw_zookeeper_value=#{raw_value.inspect} zookeeper_stat=#{stat.inspect} "\
           "exception=#{e.inspect} #{e.backtrace.inspect}"
         )
-        instrument_name = AS_NOTIFICATION_ERROR
         instrument_params[:error] = e
         instrument_params[:raw_value] = raw_value
         registered_value.default_value
       end
 
+      # TODO if there is a deserialization error, do we want to indicate that on the CachedPath?
       @cache[path] = CachedPath.new(value, stat)
 
       debug(
         "updated cache path=#{path} raw_value=#{raw_value.inspect} "\
         "value=#{value.inspect} stat=#{stat.inspect}"
       )
-      ActiveSupport::Notifications.instrument(instrument_name, instrument_params)
+      ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
       true
     rescue ::ZK::Exceptions::ZKError => e
       warn("update_cache path=#{path} exception=#{e.inspect}, retrying")

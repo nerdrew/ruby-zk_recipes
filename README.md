@@ -122,36 +122,24 @@ end
 ### ActiveSupport::Notifications
 
 `ZkRecipes` use `ActiveSupport::Notifications` for callbacks.
-`ZkRecipes::Cache` has two different notifications: `zk_recipes.cache.update`
-and `zk_recipes.cache.error`.
 
 WARNING: exceptions raised in `ActiveSupport::Notifications.subscribe` will
 bubble up to the line where the notification is instrumented. MAKE SURE YOU
-CATCH YOUR EXCEPTIONS IN YOUR SUBSCRIBE BLOCKS!
+CATCH EXCEPTIONS IN YOUR SUBSCRIBE BLOCKS!
 
 Example:
 
 ```ruby
-ActiveSupport::Notifications.subscribe("zk_recipes.cache.update") do |_name, _start, _finish, _id, payload|
-  begin
+ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |_name, _start, _finish, _id, payload|
+  if payload[:error]
+    puts "There was a ZkRecipes::Cache error #{payload[:error]}"
+    puts "The error occurred trying to deserialize a value from ZK "\
+      "path=#{payload[:path] raw_zk_value=#{payload[:raw_value]}"
+  else
     puts "Received and update for path=#{payload[:path}."
     puts "The update in ZK happened #{payload[:latency_seconds]} seconds ago."
     puts "The path's data is #{payload[:data_length]} bytes."
     puts "The path's version is #{payload[:version]}."
-  rescue => e
-    warn "there was an error=#{e.inspect}"
-  end
-end
-
-ActiveSupport::Notifications.subscribe("zk_recipes.cache.error") do |_name, _start, _finish, _id, payload|
-  begin
-    puts "There was a ZkRecipes::Cache error #{payload[:error]}"
-    if payload[:path]
-      puts "The error occurred trying to deserialize a value from ZK "\
-        "path=#{payload[:path] raw_zk_value=#{payload[:raw_value]}"
-    end
-  rescue => e
-    warn "there was an error=#{e.inspect}"
   end
 end
 ```

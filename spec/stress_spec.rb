@@ -32,7 +32,12 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
   let(:children) { [] }
 
   before do
-    ActiveSupport::Notifications.subscribe("zk_recipes.cache.update") do |_name, _start, _finish, _id, payload|
+    ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |_name, _start, _finish, _id, payload|
+      if payload[:error]
+        zk_cache_exceptions << payload[:error].class
+        next
+      end
+
       warn "version mismatch #{payload[:value]} != #{payload[:version]}" if payload[:value] != payload[:version]
 
       delays << payload[:latency_seconds]
@@ -41,7 +46,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
   end
 
   after do
-    ActiveSupport::Notifications.unsubscribe("zk_recipes.cache.update")
+    ActiveSupport::Notifications.unsubscribe("cache.zk_recipes")
     zk.close!
     cache.close!
     zk_proxy.close!
@@ -80,7 +85,12 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
       cache.reopen
 
       # exit successfully if an update is received
-      ActiveSupport::Notifications.subscribe("zk_recipes.cache.update") do |*_args|
+      ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |*_args, payload|
+        if payload[:error]
+          zk_cache_exceptions << payload[:error].class
+          next
+        end
+
         next unless zk_cache_exceptions.empty? && zk_exceptions.empty?
         logger.debug("child succeeded pid=#{Process.pid}")
         exit!(0)
