@@ -11,7 +11,7 @@ module ZkRecipes
       @cache = Concurrent::Map.new
       @latch = Concurrent::CountDownLatch.new
       @logger = logger
-      @pending_updates = Concurrent::Hash.new
+      @pending_updates = Concurrent::Hash.new # Concurrent::Map does not implement #reject!
       @registerable = true
       @registered_values = Concurrent::Map.new
       @session_id = nil
@@ -44,6 +44,7 @@ module ZkRecipes
     end
 
     def setup_callbacks(zk)
+      raise Error, "setup_callbacks can only be called once" unless @registerable
       @zk = zk
       @registerable = false
 
@@ -51,34 +52,33 @@ module ZkRecipes
         raise Error, "the ZK::Client is already connected, the cached values must be set before connecting"
       end
 
-      @zk.on_connected do |e|
-        info("on_connected session_id old=#{@session_id} new=#{@zk.session_id} #{e.event_name} #{e.state_name}")
+      @registered_values.each do |path, _value|
+        @watches[path] = @zk.register(path) do |event|
+          if event.node_event?
+            debug("node event=#{event.inspect} #{event.event_name} #{event.state_name}")
+            unless update_cache(event.path)
+              @pending_updates[path] = nil
+              @zk.defer { process_pending_updates }
+            end
+          else
+            warn("session event=#{event.inspect}")
+          end
+        end
+      end
+
+      @watches["on_connected"] = @zk.on_connected do
         if @session_id == @zk.session_id
           process_pending_updates
           next
         end
 
+        debug("on_connected new session")
         @pending_updates.clear
         @registered_values.each do |path, _value|
-          @watches[path] ||= @zk.register(path) do |event|
-            if event.node_event?
-              debug("node event=#{event.inspect} #{event.event_name} #{event.state_name}")
-              unless update_cache(event.path)
-                @pending_updates[path] = nil
-                @zk.defer { process_pending_updates }
-              end
-            else
-              warn("session event=#{event.inspect}")
-            end
-          end
           @pending_updates[path] = nil unless update_cache(path)
         end
         @session_id = @zk.session_id
         @latch.count_down
-      end
-
-      @zk.on_expired_session do |e|
-        info("on_expired_session #{e.event_name} #{e.state_name}")
       end
 
       @zk.on_exception do |e|
@@ -100,6 +100,9 @@ module ZkRecipes
       @watches.each_value(&:unsubscribe)
       @watches.clear
       @zk.close! if @owned_zk
+      @zk = nil
+      @cache = nil
+      @registered_values = nil
     end
 
     def reopen
@@ -192,6 +195,7 @@ module ZkRecipes
     end
 
     def process_pending_updates
+      return if @pending_updates.empty?
       info("processing pending updates=#{@pending_updates.size}")
       @pending_updates.reject! do |missed_path, _|
         debug("update_cache with previously missed update path=#{missed_path}")
