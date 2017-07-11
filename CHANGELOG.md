@@ -2,8 +2,9 @@
 
 ## 0.2.0
 
-BREAKING CHANGES
+This version includes BREAKING CHANGES. See below
 
+- cleanup logging
 - Make `on_connected` lighter: `on_connected` gets called for every watch when
   a connection flaps. Make the happy path `on_connected` faster.
 - Add `ZkRecipes::Cache#reopen` for resetting the cache after a `fork`
