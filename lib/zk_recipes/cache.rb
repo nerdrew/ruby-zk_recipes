@@ -37,7 +37,7 @@ module ZkRecipes
     def register(path, default_value, &block)
       raise Error, "register only allowed before setup_callbacks called" unless @registerable
 
-      debug("added path=#{path} default_value=#{default_value.inspect}")
+      debug { "added path=#{path} default_value=#{default_value.inspect}" }
       @cache[path] = CachedPath.new(default_value)
       @registered_values[path] = RegisteredPath.new(default_value, block)
       ActiveSupport::Notifications.instrument(AS_NOTIFICATION, path: path, value: default_value)
@@ -55,13 +55,13 @@ module ZkRecipes
       @registered_values.each do |path, _value|
         @watches[path] = @zk.register(path) do |event|
           if event.node_event?
-            debug("node event=#{event.inspect} #{event.event_name} #{event.state_name}")
+            debug("node event path=#{event.path} #{event.event_name} #{event.state_name}")
             unless update_cache(event.path)
               @pending_updates[path] = nil
               @zk.defer { process_pending_updates }
             end
           else
-            warn("session event=#{event.inspect}")
+            warn("session event #{event.event_name} #{event.state_name}")
           end
         end
       end
@@ -87,11 +87,11 @@ module ZkRecipes
     end
 
     def wait_for_warm_cache(timeout = 30)
-      debug("waiting for cache to warm timeout=#{timeout}")
+      debug("waiting for cache to warm timeout=#{timeout.inspect}")
       if @latch.wait(timeout)
         true
       else
-        warn("didn't warm cache before timeout connected=#{@zk.connected?} timeout=#{timeout}")
+        warn("didn't warm cache before timeout connected=#{@zk.connected?} timeout=#{timeout.inspect}")
         false
       end
     end
@@ -143,8 +143,6 @@ module ZkRecipes
 
     # only called from ZK thread
     def update_cache(path)
-      debug("update_cache path=#{path}")
-
       stat = @zk.stat(path, watch: true)
 
       instrument_params = { path: path }
@@ -168,10 +166,7 @@ module ZkRecipes
         registered_value = @registered_values.fetch(path)
         instrument_params[:value] = registered_value.deserialize(raw_value)
       rescue => e
-        error(
-          "deserialization error raw_zookeeper_value=#{raw_value.inspect} zookeeper_stat=#{stat.inspect} "\
-          "exception=#{e.inspect} #{e.backtrace.inspect}"
-        )
+        error("deserialization error path=#{path} stat=#{stat.inspect} exception=#{e.inspect} #{e.backtrace.inspect}")
         instrument_params[:error] = e
         instrument_params[:raw_value] = raw_value
         registered_value.default_value
@@ -180,11 +175,8 @@ module ZkRecipes
       # TODO if there is a deserialization error, do we want to indicate that on the CachedPath?
       @cache[path] = CachedPath.new(value, stat)
 
-      debug(
-        "updated cache path=#{path} raw_value=#{raw_value.inspect} "\
-        "value=#{value.inspect} stat=#{stat.inspect}"
-      )
       ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
+      debug { "update_cache path=#{path} raw_value=#{raw_value.inspect} value=#{value.inspect} stat=#{stat.inspect}" }
       true
     rescue ::ZK::Exceptions::ZKError => e
       warn("update_cache path=#{path} exception=#{e.inspect}, retrying")
@@ -196,19 +188,17 @@ module ZkRecipes
 
     def process_pending_updates
       return if @pending_updates.empty?
-      info("processing pending updates=#{@pending_updates.size}")
+      debug("processing pending updates=#{@pending_updates.size}")
       @pending_updates.reject! do |missed_path, _|
-        debug("update_cache with previously missed update path=#{missed_path}")
         update_cache(missed_path)
       end
-      info("pending updates not processed=#{@pending_updates.size}")
     end
 
     %w(debug info warn error).each do |m|
       module_eval <<~EOM, __FILE__, __LINE__
-        def #{m}(msg)
+        def #{m}(msg = nil)
           return unless @logger
-          @logger.#{m}("ZkRecipes::Cache") { msg }
+          @logger.#{m}("ZkRecipes::Cache") { msg || yield }
         end
       EOM
     end
