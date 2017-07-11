@@ -1,11 +1,10 @@
 # frozen_string_literal: true
 
 RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
-  let(:logger) { Logger.new(ENV["ZK_DEBUG"] ? STDERR : nil) }
+  let(:logger) { Logger.new(ENV["ZK_RECIPES_DEBUG"] ? STDERR : nil) }
   let!(:cache) do
     cache = ZkRecipes::Cache.new(logger: logger)
-    cache.register("/test/boom", "boom")
-    cache.register("/test/foo", "foo")
+    cache.register("/test/boom", 0, &:to_i)
     cache.setup_callbacks(zk_proxy)
     zk_proxy.connect
     cache.wait_for_warm_cache(timeout)
@@ -25,7 +24,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
   end
 
   let(:delays) { [] }
-  let(:versions) { { "/test/boom" => [], "/test/foo" => [] } }
+  let(:versions) { [] }
   let(:seconds) { 120 }
   let(:timeout) { 5 }
   let(:zk_cache_exceptions) { Set.new }
@@ -33,14 +32,21 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
   let(:children) { [] }
 
   before do
-    ActiveSupport::Notifications.subscribe("zk_recipes.cache.update") do |_name, _start, _finish, _id, payload|
+    ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |_name, _start, _finish, _id, payload|
+      if payload[:error]
+        zk_cache_exceptions << payload[:error].class
+        next
+      end
+
+      warn "version mismatch #{payload[:value]} != #{payload[:version]}" if payload[:value] != payload[:version]
+
       delays << payload[:latency_seconds]
-      versions[payload[:path]] << payload[:version]
+      versions << payload[:value]
     end
   end
 
   after do
-    ActiveSupport::Notifications.unsubscribe("zk_recipes.cache.update")
+    ActiveSupport::Notifications.unsubscribe("cache.zk_recipes")
     zk.close!
     cache.close!
     zk_proxy.close!
@@ -51,8 +57,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
   def update_values
     @expected_version ||= 0
     @expected_version += 1
-    zk.set("/test/boom", "boom")
-    zk.set("/test/foo", "foo")
+    zk.set("/test/boom", @expected_version.to_s)
     sleep(rand(0..0.01))
   end
 
@@ -75,23 +80,29 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
       children << child_pid
     else
       # child
-      begin
-        logger.debug("child reopen")
-        zk_proxy.reopen
+      logger.debug("child reopen")
+      zk_proxy.reopen
+      cache.reopen
 
-        # exit successfully if an update is received
-        ActiveSupport::Notifications.subscribe("zk_recipes.cache.update") do |*_args|
-          next unless zk_cache_exceptions.empty? && zk_exceptions.empty?
-          logger.debug("child succeeded pid=#{Process.pid}")
-          exit!(0)
+      # exit successfully if an update is received
+      ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |*_args, payload|
+        if payload[:error]
+          zk_cache_exceptions << payload[:error].class
+          next
         end
 
-        sleep 10
-        warn "child failed pid=#{Process.pid} "\
-          "zk_cache_exceptions=#{zk_cache_exceptions.inspect} "\
-          "zk_exceptions=#{zk_exceptions.inspect}"
-        exit!(1)
+        next unless zk_cache_exceptions.empty? && zk_exceptions.empty?
+        logger.debug("child succeeded pid=#{Process.pid}")
+        exit!(0)
       end
+
+      almost_there { expect(cache["/test/boom"]).to eq(@expected_version) }
+
+      sleep 10
+      warn "child failed pid=#{Process.pid} "\
+        "zk_cache_exceptions=#{zk_cache_exceptions.inspect} "\
+        "zk_exceptions=#{zk_exceptions.inspect}"
+      exit!(1)
     end
   end
 
@@ -102,7 +113,6 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
         i = 0
         loop do
           cache["/test/boom"]
-          cache["/test/foo"]
           i += 1
           if i % 1_000 == 0
             break if Time.now > stop
@@ -115,31 +125,33 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
 
     sleep(1)
     zk.create("/test/boom", "boom")
-    zk.create("/test/foo", "foo")
 
     until Time.now > stop
-      warn "update_values" if ENV["ZK_DEBUG"]
+      warn "update_values" if ENV["ZK_RECIPES_DEBUG"]
       10.times { update_values }
-      warn "slow proxy" if ENV["ZK_DEBUG"]
+      warn "slow proxy" if ENV["ZK_RECIPES_DEBUG"]
       slow_proxy
-      warn "update_values" if ENV["ZK_DEBUG"]
+      warn "update_values" if ENV["ZK_RECIPES_DEBUG"]
       10.times { update_values }
-      warn "expire_session" if ENV["ZK_DEBUG"]
+      warn "expire_session" if ENV["ZK_RECIPES_DEBUG"]
       expire_session
-      warn "fork" if ENV["ZK_DEBUG"]
-      test_fork
+      if Process.respond_to?(:fork)
+        warn "fork" if ENV["ZK_RECIPES_DEBUG"]
+        test_fork
+      end
     end
 
     children.each do |pid|
       _, status = Process.wait2(pid)
-      expect(status.exitstatus).to eq(0) # exitstatus == 0 => tests passed in this child
+      almost_there { expect(status.exitstatus).to eq(0) } # exitstatus == 0 => tests passed in this child
     end
 
     warn "Stress Test Summary"
     warn "delay mean=#{delays.mean.round(3)}s median=#{delays.median.round(3)}s "\
       "99percentile=#{delays.percentile(90).round(3)}s max=#{delays.max.round(3)}s min=#{delays.min.round(3)}s"
     warn "read/ms=" + threads.map { |t| t.join.value / seconds / 1_000 }.inspect
-    warn "last_expected_version=#{@expected_version}"
     warn "versions=#{versions.inspect}"
+
+    almost_there { expect(cache["/test/boom"]).to eq(@expected_version) }
   end
 end

@@ -3,15 +3,15 @@
 module ZkRecipes
   class Cache
     class Error < StandardError; end
+    class PathError < Error; end
 
-    AS_NOTIFICATION_UPDATE = "zk_recipes.cache.update"
-    AS_NOTIFICATION_ERROR = "zk_recipes.cache.error"
+    AS_NOTIFICATION = "cache.zk_recipes"
 
     def initialize(logger: nil, host: nil, timeout: nil, zk_opts: {})
       @cache = Concurrent::Map.new
       @latch = Concurrent::CountDownLatch.new
       @logger = logger
-      @pending_updates = Concurrent::Hash.new
+      @pending_updates = Concurrent::Hash.new # Concurrent::Map does not implement #reject!
       @registerable = true
       @registered_values = Concurrent::Map.new
       @session_id = nil
@@ -20,9 +20,10 @@ module ZkRecipes
 
       if block_given?
         @owned_zk = true
+        @warm_cache_timeout = timeout || 30
         yield(self)
 
-        expiration = Time.now + (timeout || 30)
+        expiration = Time.now + @warm_cache_timeout
         connect(host, zk_opts)
 
         wait_for_warm_cache(expiration - Time.now)
@@ -39,10 +40,11 @@ module ZkRecipes
       debug("added path=#{path} default_value=#{default_value.inspect}")
       @cache[path] = CachedPath.new(default_value)
       @registered_values[path] = RegisteredPath.new(default_value, block)
-      ActiveSupport::Notifications.instrument(AS_NOTIFICATION_UPDATE, path: path, value: default_value)
+      ActiveSupport::Notifications.instrument(AS_NOTIFICATION, path: path, value: default_value)
     end
 
     def setup_callbacks(zk)
+      raise Error, "setup_callbacks can only be called once" unless @registerable
       @zk = zk
       @registerable = false
 
@@ -50,51 +52,46 @@ module ZkRecipes
         raise Error, "the ZK::Client is already connected, the cached values must be set before connecting"
       end
 
-      @zk.on_connected do |e|
-        info("on_connected session_id old=#{@session_id} new=#{@zk.session_id} #{e.event_name} #{e.state_name}")
+      @registered_values.each do |path, _value|
+        @watches[path] = @zk.register(path) do |event|
+          if event.node_event?
+            debug("node event=#{event.inspect} #{event.event_name} #{event.state_name}")
+            unless update_cache(event.path)
+              @pending_updates[path] = nil
+              @zk.defer { process_pending_updates }
+            end
+          else
+            warn("session event=#{event.inspect}")
+          end
+        end
+      end
+
+      @watches["on_connected"] = @zk.on_connected do
         if @session_id == @zk.session_id
           process_pending_updates
           next
         end
 
+        debug("on_connected new session")
         @pending_updates.clear
         @registered_values.each do |path, _value|
-          @watches[path] ||= @zk.register(path) do |event|
-            if event.node_event?
-              debug("node event=#{event.inspect} #{event.event_name} #{event.state_name}")
-              unless update_cache(event.path)
-                @pending_updates[path] = nil
-                @zk.defer { process_pending_updates }
-              end
-            else
-              warn("session event=#{event.inspect}")
-            end
-          end
           @pending_updates[path] = nil unless update_cache(path)
         end
         @session_id = @zk.session_id
         @latch.count_down
       end
 
-      @zk.on_expired_session do |e|
-        info("on_expired_session #{e.event_name} #{e.state_name}")
-      end
-
       @zk.on_exception do |e|
         error("on_exception exception=#{e.inspect} backtrace=#{e.backtrace.inspect}")
-        begin
-          ActiveSupport::Notifications.instrument(AS_NOTIFICATION_ERROR, error: e)
-        rescue Exception => e
-          error("on_exception ActiveSupport::Notifications subscriber exception=#{e.inspect} backtrace=#{e.backtrace.inspect}")
-        end
       end
     end
 
     def wait_for_warm_cache(timeout = 30)
+      debug("waiting for cache to warm timeout=#{timeout}")
       if @latch.wait(timeout)
         true
       else
-        warn("didn't connect before timeout connected=#{@zk.connected?} timeout=#{timeout}")
+        warn("didn't warm cache before timeout connected=#{@zk.connected?} timeout=#{timeout}")
         false
       end
     end
@@ -103,16 +100,34 @@ module ZkRecipes
       @watches.each_value(&:unsubscribe)
       @watches.clear
       @zk.close! if @owned_zk
+      @zk = nil
+      @cache = nil
+      @registered_values = nil
+    end
+
+    def reopen
+      @latch = Concurrent::CountDownLatch.new
+      @session_id = nil
+      @pending_updates.clear
+      if @owned_zk
+        expiration = Time.now + @warm_cache_timeout
+        @zk.reopen
+        wait_for_warm_cache(expiration - Time.now)
+      end
     end
 
     def fetch(path)
       @cache.fetch(path).value
+    rescue KeyError
+      raise PathError, "no registered path for #{path.inspect}"
     end
     alias_method :[], :fetch
 
     def fetch_existing(path)
       cached = @cache.fetch(path)
       cached.value if cached.stat&.exists?
+    rescue KeyError
+      raise PathError, "no registered path=#{path.inspect}"
     end
 
     private
@@ -132,7 +147,6 @@ module ZkRecipes
 
       stat = @zk.stat(path, watch: true)
 
-      instrument_name = AS_NOTIFICATION_UPDATE
       instrument_params = { path: path }
 
       unless stat.exists?
@@ -140,17 +154,15 @@ module ZkRecipes
         @cache[path] = CachedPath.new(value, stat)
         debug("no node, setting watch path=#{path}")
         instrument_params[:value] = value
-        ActiveSupport::Notifications.instrument(instrument_name, instrument_params)
+        ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
         return true
       end
 
       raw_value, stat = @zk.get(path, watch: true)
 
-      instrument_params.merge!(
-        latency_seconds: Time.now - stat.mtime_t,
-        version: stat.version,
-        data_length: stat.data_length,
-      )
+      instrument_params[:latency_seconds] = Time.now - stat.mtime_t
+      instrument_params[:version] = stat.version
+      instrument_params[:data_length] = stat.data_length
 
       value = begin
         registered_value = @registered_values.fetch(path)
@@ -160,19 +172,19 @@ module ZkRecipes
           "deserialization error raw_zookeeper_value=#{raw_value.inspect} zookeeper_stat=#{stat.inspect} "\
           "exception=#{e.inspect} #{e.backtrace.inspect}"
         )
-        instrument_name = AS_NOTIFICATION_ERROR
         instrument_params[:error] = e
         instrument_params[:raw_value] = raw_value
         registered_value.default_value
       end
 
+      # TODO if there is a deserialization error, do we want to indicate that on the CachedPath?
       @cache[path] = CachedPath.new(value, stat)
 
       debug(
         "updated cache path=#{path} raw_value=#{raw_value.inspect} "\
         "value=#{value.inspect} stat=#{stat.inspect}"
       )
-      ActiveSupport::Notifications.instrument(instrument_name, instrument_params)
+      ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
       true
     rescue ::ZK::Exceptions::ZKError => e
       warn("update_cache path=#{path} exception=#{e.inspect}, retrying")
@@ -183,6 +195,7 @@ module ZkRecipes
     end
 
     def process_pending_updates
+      return if @pending_updates.empty?
       info("processing pending updates=#{@pending_updates.size}")
       @pending_updates.reject! do |missed_path, _|
         debug("update_cache with previously missed update path=#{missed_path}")

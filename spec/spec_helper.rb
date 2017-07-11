@@ -55,22 +55,21 @@ RSpec.configure do |config|
   end
 
   def spawn(cmd)
-    warn "+ #{cmd}" if ENV["ZK_DEBUG"]
+    warn "+ #{cmd}" if ENV["ZK_RECIPES_DEBUG"]
     Kernel.spawn(cmd)
   end
 
   def system(cmd)
-    warn "+ #{cmd}" if ENV["ZK_DEBUG"]
+    warn "+ #{cmd}" if ENV["ZK_RECIPES_DEBUG"]
     Kernel.system(cmd)
   end
 
-  def almost_there(tries = 100)
-    i ||= 0
+  def almost_there(retries = 100)
     yield
   rescue RSpec::Expectations::ExpectationNotMetError
-    raise if i > tries
+    raise if retries < 1
     sleep 0.1
-    i += 1
+    retries -= 1
     retry
   end
 end
