@@ -4,6 +4,8 @@
 
 This version includes BREAKING CHANGES. See below
 
+- BREAKING CHANGE: rename fetch_existing to fetch_valid, it checks the path
+  exists AND the value successfully deserialized.
 - cleanup logging
 - Make `on_connected` lighter: `on_connected` gets called for every watch when
   a connection flaps. Make the happy path `on_connected` faster.
