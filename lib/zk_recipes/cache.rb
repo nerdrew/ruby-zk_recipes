@@ -123,9 +123,9 @@ module ZkRecipes
     end
     alias_method :[], :fetch
 
-    def fetch_existing(path)
+    def fetch_valid(path)
       cached = @cache.fetch(path)
-      cached.value if cached.stat&.exists?
+      cached.value if cached.valid?
     rescue KeyError
       raise PathError, "no registered path=#{path.inspect}"
     end
@@ -149,7 +149,7 @@ module ZkRecipes
 
       unless stat.exists?
         value = @registered_values.fetch(path).default_value
-        @cache[path] = CachedPath.new(value, stat)
+        @cache[path] = CachedPath.new(value, stat: stat)
         debug("no node, setting watch path=#{path}")
         instrument_params[:value] = value
         ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
@@ -162,6 +162,7 @@ module ZkRecipes
       instrument_params[:version] = stat.version
       instrument_params[:data_length] = stat.data_length
 
+      valid = true
       value = begin
         registered_value = @registered_values.fetch(path)
         instrument_params[:value] = registered_value.deserialize(raw_value)
@@ -169,11 +170,11 @@ module ZkRecipes
         error("deserialization error path=#{path} stat=#{stat.inspect} exception=#{e.inspect} #{e.backtrace.inspect}")
         instrument_params[:error] = e
         instrument_params[:raw_value] = raw_value
+        valid = false
         registered_value.default_value
       end
 
-      # TODO if there is a deserialization error, do we want to indicate that on the CachedPath?
-      @cache[path] = CachedPath.new(value, stat)
+      @cache[path] = CachedPath.new(value, stat: stat, valid: valid)
 
       ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
       debug { "update_cache path=#{path} raw_value=#{raw_value.inspect} value=#{value.inspect} stat=#{stat.inspect}" }
@@ -203,7 +204,18 @@ module ZkRecipes
       EOM
     end
 
-    CachedPath = Struct.new(:value, :stat)
+    class CachedPath
+      attr_reader :value, :stat
+      def initialize(value, stat: nil, valid: false)
+        @value = value
+        @stat = stat
+        @valid = valid
+      end
+
+      def valid?
+        @valid
+      end
+    end
 
     class RegisteredPath < Struct.new(:default_value, :deserializer)
       def deserialize(raw)

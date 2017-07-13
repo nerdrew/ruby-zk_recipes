@@ -52,19 +52,34 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
     end
   end
 
-  describe "#fetch_existing" do
+  describe "#fetch_valid" do
     it "fetches registered paths that are set" do
       zk.create("/test/boom")
       zk.set("/test/boom", "cat")
-      almost_there { expect(cache.fetch_existing("/test/boom")).to eq("cat") }
+      almost_there { expect(cache.fetch_valid("/test/boom")).to eq("cat") }
     end
 
     it "returns nil for unset paths" do
-      expect(cache.fetch_existing("/test/boom")).to be(nil)
+      expect(cache.fetch_valid("/test/boom")).to be(nil)
+    end
+
+    context "paths with deserialization errors" do
+      let(:cache) do
+        ZkRecipes::Cache.new(host: host, logger: logger, timeout: 10, zk_opts: { timeout: 5 }) do |z|
+          z.register("/test/boom", "goat") { |_| raise "never valid" }
+        end
+      end
+
+      it "returns nil" do
+        expect(cache.fetch_valid("/test/boom")).to be(nil)
+        zk.create("/test/boom")
+        zk.set("/test/boom", "cat")
+        almost_there { expect(cache.fetch_valid("/test/boom")).to be(nil) }
+      end
     end
 
     it "raises PathError for unregistered paths" do
-      expect { cache.fetch_existing("/test/baz") }.to raise_error(described_class::PathError)
+      expect { cache.fetch_valid("/test/baz") }.to raise_error(described_class::PathError)
     end
   end
 
