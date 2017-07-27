@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Tweak logging
+
 ## 0.2.0
 
 This version includes BREAKING CHANGES. See below
