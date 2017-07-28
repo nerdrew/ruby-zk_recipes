@@ -195,11 +195,11 @@ module ZkRecipes
       end
     end
 
-    %w(debug info warn error).each do |m|
+    %w(debug warn error).each do |m|
       module_eval <<~EOM, __FILE__, __LINE__
         def #{m}(msg = nil)
           return unless @logger
-          @logger.#{m}("ZkRecipes::Cache") { msg || yield }
+          @logger.#{m} { msg || yield }
         end
       EOM
     end
