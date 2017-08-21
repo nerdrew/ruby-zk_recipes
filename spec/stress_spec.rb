@@ -12,7 +12,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
   end
 
   let(:zk_proxy) do
-    ZK.new("localhost:#{PROXY_PORT}", connect: false, timeout: timeout).tap do |z|
+    ZK.new("localhost:#{PROXY_PORT}", connect: false, timeout: timeout * 2).tap do |z|
       z.on_exception { |e| zk_cache_exceptions << e.class }
     end
   end

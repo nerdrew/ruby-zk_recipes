@@ -28,6 +28,8 @@ RSpec.configure do |config|
 
   config.after(:suite) do
     ZK::Server.shutdown
+    sleep 0.1
+    FileUtils.rm_r(File.expand_path('../../zookeeper', __FILE__))
   end
 
   config.before(:each, zookeeper: true) do
