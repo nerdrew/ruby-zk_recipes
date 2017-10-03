@@ -174,6 +174,11 @@ module ZkRecipes
         registered_value.default_value
       end
 
+      if value == USE_DEFAULT
+        valid = false
+        value = registered_value.default_value
+      end
+
       @cache[path] = CachedPath.new(value, stat: stat, valid: valid)
 
       ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
@@ -203,6 +208,8 @@ module ZkRecipes
         end
       EOM
     end
+
+    USE_DEFAULT = Object.new
 
     class CachedPath
       attr_reader :value, :stat

@@ -83,6 +83,22 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
     end
   end
 
+  describe "USE_DEFAULT" do
+    let(:cache) do
+      ZkRecipes::Cache.new(host: host, logger: logger, timeout: 10, zk_opts: { timeout: 5 }) do |z|
+        z.register("/test/boom", "goat") { |_| return ::ZkRecipes::Cache::USE_DEFAULT }
+      end
+    end
+
+    it "returns the default value when the deserializer returns USE_DEFAULT" do
+      zk.create("/test/boom")
+      zk.set("/test/boom", "cat")
+      almost_there { expect(zk.get("/test/boom").first).to eq("cat") } # wait for the written value
+      expect(cache.fetch("/test/boom")).to eq("goat")
+      expect(cache.fetch_valid("/test/boom")).to be(nil)
+    end
+  end
+
   it "works" do
     expect(cache["/test/boom"]).to eq("goat")
     expect(cache["/test/foo"]).to eq(1)
