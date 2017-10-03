@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- More logging tweaks: use block form of logging for everything *execpt* string literals
+- Add `ZkRecipes::Cache::USE_DEFAULT` marker so deserializers can return a default value without raising
+
 ## 0.2.1
 
 - Tweak logging
