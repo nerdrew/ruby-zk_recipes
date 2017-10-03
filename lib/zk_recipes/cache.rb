@@ -55,13 +55,13 @@ module ZkRecipes
       @registered_values.each do |path, _value|
         @watches[path] = @zk.register(path) do |event|
           if event.node_event?
-            debug("node event path=#{event.path} #{event.event_name} #{event.state_name}")
+            debug { "node event path=#{event.path} #{event.event_name} #{event.state_name}" }
             unless update_cache(event.path)
               @pending_updates[path] = nil
               @zk.defer { process_pending_updates }
             end
           else
-            warn("session event #{event.event_name} #{event.state_name}")
+            warn { "session event #{event.event_name} #{event.state_name}" }
           end
         end
       end
@@ -82,16 +82,16 @@ module ZkRecipes
       end
 
       @zk.on_exception do |e|
-        error("on_exception exception=#{e.inspect} backtrace=#{e.backtrace.inspect}")
+        error { "on_exception exception=#{e.inspect} backtrace=#{e.backtrace.inspect}" }
       end
     end
 
     def wait_for_warm_cache(timeout = 30)
-      debug("waiting for cache to warm timeout=#{timeout.inspect}")
+      debug { "waiting for cache to warm timeout=#{timeout.inspect}" }
       if @latch.wait(timeout)
         true
       else
-        warn("didn't warm cache before timeout connected=#{@zk.connected?} timeout=#{timeout.inspect}")
+        warn { "didn't warm cache before timeout connected=#{@zk.connected?} timeout=#{timeout.inspect}" }
         false
       end
     end
@@ -135,7 +135,7 @@ module ZkRecipes
     def connect(host, zk_opts)
       raise Error, "already connected" if @zk
 
-      debug("connecting host=#{host.inspect}")
+      debug { "connecting host=#{host.inspect}" }
       ZK.new(host, **zk_opts) do |zk|
         setup_callbacks(zk)
       end
@@ -150,7 +150,7 @@ module ZkRecipes
       unless stat.exists?
         value = @registered_values.fetch(path).default_value
         @cache[path] = CachedPath.new(value, stat: stat)
-        debug("no node, setting watch path=#{path}")
+        debug { "no node, setting watch path=#{path}" }
         instrument_params[:value] = value
         ActiveSupport::Notifications.instrument(AS_NOTIFICATION, instrument_params)
         return true
@@ -167,7 +167,7 @@ module ZkRecipes
         registered_value = @registered_values.fetch(path)
         instrument_params[:value] = registered_value.deserialize(raw_value)
       rescue => e
-        error("deserialization error path=#{path} stat=#{stat.inspect} exception=#{e.inspect} #{e.backtrace.inspect}")
+        error { "deserialization error path=#{path} stat=#{stat.inspect} exception=#{e.inspect} #{e.backtrace.inspect}" }
         instrument_params[:error] = e
         instrument_params[:raw_value] = raw_value
         valid = false
@@ -180,16 +180,16 @@ module ZkRecipes
       debug { "update_cache path=#{path} raw_value=#{raw_value.inspect} value=#{value.inspect} stat=#{stat.inspect}" }
       true
     rescue ::ZK::Exceptions::ZKError => e
-      warn("update_cache path=#{path} exception=#{e.inspect}, retrying")
+      warn { "update_cache path=#{path} exception=#{e.inspect}, retrying" }
       retry
     rescue ::ZK::Exceptions::KeeperException, ::Zookeeper::Exceptions::ZookeeperException => e
-      error("update_cache path=#{path} exception=#{e.inspect}")
+      error { "update_cache path=#{path} exception=#{e.inspect}" }
       false
     end
 
     def process_pending_updates
       return if @pending_updates.empty?
-      debug("processing pending updates=#{@pending_updates.size}")
+      debug { "processing pending updates=#{@pending_updates.size}" }
       @pending_updates.reject! do |missed_path, _|
         update_cache(missed_path)
       end
