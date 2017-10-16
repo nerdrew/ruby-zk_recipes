@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- `ZkRecipes::Cache#close!` should not cause exceptions if there are zk events in the zk queue
+
 ## 0.2.2
 
 - More logging tweaks: use block form of logging for everything *execpt* string literals

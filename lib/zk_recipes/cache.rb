@@ -98,13 +98,13 @@ module ZkRecipes
 
     def close!
       @watches.each_value(&:unsubscribe)
-      @watches.clear
       @zk.close! if @owned_zk
-      @zk = nil
-      @cache = nil
-      @registered_values = nil
+      @watches.clear
+      @pending_updates.clear
     end
 
+    # reopen the client after the process forks
+    # This is *not* the opposite of `#close!`.
     def reopen
       @latch = Concurrent::CountDownLatch.new
       @session_id = nil
