@@ -1,3 +1,19 @@
+if ENV["COVERAGE"]
+  require "simplecov"
+
+  # Store our original (pre-fork) pid, so that we only call `format!`
+  # in our exit handler if we're in the original parent.
+  pid = Process.pid
+  SimpleCov.at_exit do
+    SimpleCov.result.format! if Process.pid == pid
+  end
+
+  # Start SimpleCov as usual.
+  SimpleCov.start do
+    add_filter "/spec/"
+  end
+end
+
 require "bundler/setup"
 require "zk_recipes"
 
@@ -5,8 +21,44 @@ require "descriptive_statistics"
 require "logger"
 require "pry"
 require "zk-server"
+require "active_support/core_ext/object/blank"
 
 RSpec.configure do |config|
+  class Formatter
+    def call(severity, datetime, _progname, msg)
+      sprintf(
+        "%s %-5s: pid=%d tid=%d %s\n",
+        datetime.utc.iso8601(6),
+        severity,
+        Process.pid,
+        Thread.current.object_id,
+        msg
+      )
+    end
+  end
+
+  class TestLogger < Logger
+    @@errors = Concurrent::Array.new
+
+    def initialize(*)
+      super
+    end
+
+    def add(sev, *args)
+      @@errors << (args.compact.empty? ? yield : args) if sev >= Logger::WARN
+      super
+    end
+
+    def self.errors
+      @@errors
+    end
+  end
+
+  def expect_logged_errors(*messages)
+    almost_there { expect(TestLogger.errors).to match_array(messages) }
+    TestLogger.errors.clear
+  end
+
   # Enable flags like --only-failures and --next-failure
   config.example_status_persistence_file_path = ".rspec_status"
 

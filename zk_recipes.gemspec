@@ -21,6 +21,10 @@ Gem::Specification.new do |spec|
   spec.executables = spec.files.grep(%r{^exe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
 
+  unless RUBY_ENGINE == "jruby"
+    spec.required_ruby_version = '>= 2.4'
+  end
+
   spec.add_runtime_dependency "activesupport", ">= 4.0"
   spec.add_runtime_dependency "concurrent-ruby", "~> 1.0"
   spec.add_runtime_dependency "zk", "~> 1.9"
