@@ -15,3 +15,5 @@ matrix:
     - rvm: ruby-head
   fast_finish: true
 sudo: required
+env:
+  - ZK_RECIPES_DEBUG=1

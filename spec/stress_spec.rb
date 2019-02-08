@@ -144,4 +144,54 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
 
     almost_there { expect(cache["/test/boom"]).to eq(@expected_version) }
   end
+
+  describe "#register_runtime" do
+    it "is threadsafe" do
+      cache
+      actions = [:register, :unregister, :set, :get]
+      paths = [["/test/path1", "value1"], ["/test/path2", "value2"], ["/test/path3", "value3"]]
+      paths.each { |path, value| zk.create(path, value) }
+
+      tester = lambda do
+        Array.new(100) do |i|
+          data = paths.sample
+          action = actions.sample
+
+          if action == :set
+            zk.set(data[0], "value#{i}")
+            next
+          end
+
+          Benchmark.realtime do
+            case action
+            when :register
+              begin
+                cache.register_runtime(data[0], data[1])
+              rescue ZkRecipes::Cache::RuntimeRegistrationError # rubocop:disable Lint/HandleExceptions
+              end
+            when :unregister
+              begin
+                cache.unregister_runtime(data[0])
+              rescue ZkRecipes::Cache::PathError # rubocop:disable Lint/HandleExceptions
+              end
+            when :get
+              begin
+                cache.fetch_runtime(data[0])
+              rescue ZkRecipes::Cache::PathError # rubocop:disable Lint/HandleExceptions
+              end
+            end
+          end
+        end.compact
+      end
+
+      threads = Array.new(10) { Thread.new { tester.call } }
+      latencies = tester.call + threads.flat_map { |t| t.join.value }
+
+      warn "#register_runtime / #unregister_runtime / get latencies"
+      warn "mean=#{latencies.mean.round(6)}s median=#{latencies.median.round(6)}s "\
+        "99percentile=#{latencies.percentile(90).round(6)}s max=#{latencies.max.round(6)}s min=#{latencies.min.round(6)}s"
+
+      expect(latencies.max).to be < 0.1
+    end
+  end
 end

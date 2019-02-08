@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Add support for watching the children of a path: `register_children`
+- Add support for registering runtime watches: `register_runtime`
+
 ## 0.2.3
 
 - `ZkRecipes::Cache#close!` should not cause exceptions if there are zk events in the zk queue

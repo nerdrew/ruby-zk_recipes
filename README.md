@@ -25,9 +25,15 @@ logger = Logger.new(STDERR)
 cache = ZkRecipes::Cache.new(host: "my-host:1234", logger: logger, timeout: 10, zk_opts: { timeout: 5 }) do |z|
   z.register("/test/boom", "goat")
   z.register("/test/foo", 1) { |raw_value| raw_value.to_i * 2 }
+  z.register_children("/test/groupA", ["/test/foo"]) { |children| children.map { |child| "/test/#{child}" } }
 end
 
-puts cache["/test/boom"]
+cache.register_runtime("/test/bar", "cat")
+
+puts cache["/test/boom"] # => "goat"
+puts cache.fetch_children("/test/groupA") # => ["/test/foo"]
+puts cache.fetch_runtime("/test/bar") # => "cat"
+
 cache.close!
 ```
 
@@ -164,9 +170,7 @@ safe, welcoming space for collaboration, and contributors are expected to
 adhere to the [Contributor Covenant](http://contributor-covenant.org) code of
 conduct.
 
-
 ## License
 
 The gem is available as open source under the terms of the [MIT
 License](http://opensource.org/licenses/MIT).
-
