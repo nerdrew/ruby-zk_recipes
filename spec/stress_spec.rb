@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
-  let(:logger) { Logger.new(ENV["ZK_RECIPES_DEBUG"] ? STDERR : nil) }
+RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
+  let(:logger) { Logger.new(ENV["ZK_RECIPES_DEBUG"].present? ? STDERR : nil) }
   let!(:cache) do
     cache = ZkRecipes::Cache.new(logger: logger)
     cache.register("/test/boom", 0, &:to_i)
@@ -33,11 +33,6 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
 
   before do
     ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |_name, _start, _finish, _id, payload|
-      if payload[:error]
-        zk_cache_exceptions << payload[:error].class
-        next
-      end
-
       warn "version mismatch #{payload[:value]} != #{payload[:version]}" if payload[:value] != payload[:version]
 
       delays << payload[:latency_seconds]
@@ -85,12 +80,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, stress: true do
       cache.reopen
 
       # exit successfully if an update is received
-      ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |*_args, payload|
-        if payload[:error]
-          zk_cache_exceptions << payload[:error].class
-          next
-        end
-
+      ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |*|
         next unless zk_cache_exceptions.empty? && zk_exceptions.empty?
         logger.debug("child succeeded pid=#{Process.pid}")
         exit!(0)

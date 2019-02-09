@@ -4,9 +4,11 @@ before_install:
   - sudo apt-get install -y socat pv
   - gem install bundler
 rvm:
-  - 2.3.5
-  - 2.4.2
-  - jruby-9.1.13.0
+  - 2.4.5
+  - 2.5.3
+  - 2.6.1
+  - jruby-9.1.17.0
+  - jruby-9.2.5.0
   - ruby-head
 matrix:
   allow_failures:
