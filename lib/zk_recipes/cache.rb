@@ -93,10 +93,11 @@ module ZkRecipes
       @registered_runtime_watches.compute_if_absent(path) do
         already_registered = false
 
-        # The watch wasn't set, so the runtime path should *not* exist. If it does, it means there is a bug.
-        if @registered_runtime_paths.put_if_absent(path, RegisteredPath.new(default_value, deserializer))
-          @registered_runtime_paths.delete(path)
-          raise StateError, "runtime path=#{path.inspect} should not exist if the watch is absent"
+        registered_path = RegisteredPath.new(default_value, deserializer)
+        if @registered_runtime_paths.put_if_absent(path, registered_path)
+          # The watch wasn't set, so the runtime path should *not* exist. If it does, it means there is a bug.
+          @logger&.error { "register_runtime: runtime path=#{path.inspect} should not exist if the watch is absent" }
+          @registered_runtime_paths[path] = registered_path
         end
 
         @zk.register(path) do |event|

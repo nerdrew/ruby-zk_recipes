@@ -26,13 +26,9 @@ begin
     z.register("/test/boom", "goat")
     z.register("/test/foo", 1) { |raw_value| raw_value.to_i * 2 }
     z.register_children("/test/groupA", ["/test/foo"]) do |children|
-      children.map do |child|
-        path = "/test/#{child}"
-        unless cache.registered_runtime_path?(path) || cache.registered_path?(path)
-          cache.register_runtime(path, "")
-        end
-        path
-      end
+      children
+        .map { |child| "/test/#{child}" }
+        .each { |path| cache.register_runtime(path, "") unless cache.registered_runtime_path?(path) || cache.registered_path?(path) }
     end
   end
 
@@ -77,10 +73,10 @@ begin
   puts "/test/groupA = #{cache.fetch_children("/test/groupA").inspect}" # => ["/test/mooo"]
 
   # The callback for /test/groupA registers a runtime path for any children; e.g. /test/mooo in this case
-  puts "/test/bar (runtime path registered by the /test/groupA callback) = #{cache.fetch_runtime("/test/mooo").inspect}" # => ""
+  puts "/test/mooo (runtime path registered by the /test/groupA callback) = #{cache.fetch_runtime("/test/mooo").inspect}" # => ""
   zk.create("/test/mooo", "cow")
   sleep 0.1
-  puts "/test/bar (runtime path registered by the /test/groupA callback) = #{cache.fetch_runtime("/test/mooo")}" # => "cow"
+  puts "/test/mooo (runtime path registered by the /test/groupA callback) = #{cache.fetch_runtime("/test/mooo")}" # => "cow"
 
   # Remove /test/groupA/mooo child, the associated runtime path will be remove by the ActiveSupport::Notifications subscription
   zk.delete("/test/groupA/mooo")

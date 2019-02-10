@@ -229,6 +229,24 @@ RSpec.describe ZkRecipes::Cache, zookeeper: true do
       zk.mkdir_p("/test/group/bar")
       almost_there { expect(children_events.last[:children_version]).to eq(2) }
     end
+
+    it "can register_runtime paths in the callback" do
+      cache = ZkRecipes::Cache.new(host: host, logger: logger, timeout: 10, zk_opts: { timeout: 5 }) do |z|
+        closers << z
+        z.register_children("/test/group") do |children|
+          children.map do |child_path|
+            z.register_runtime("/test/#{child_path}", child_path)
+            child_path
+          end
+        end
+      end
+
+      expect(cache.fetch_children("/test/group")).to eq([])
+      expect { cache.fetch_runtime("/test/runny") }.to raise_error(described_class::PathError)
+      zk.mkdir_p("/test/group/runny")
+      almost_there { expect(cache.fetch_children("/test/group")).to eq(%w[runny]) }
+      almost_there { expect(cache.fetch_runtime("/test/runny")).to eq("runny") }
+    end
   end
 
   describe "#fetch" do
