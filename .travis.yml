@@ -4,14 +4,16 @@ before_install:
   - sudo apt-get install -y socat pv
   - gem install bundler
 rvm:
-  - 2.4.5
-  - 2.5.3
-  - 2.6.1
+  - 2.4.6
+  - 2.5.5
+  - 2.6.3
   - jruby-9.1.17.0
-  - jruby-9.2.5.0
+  - jruby-9.2.7.0
   - ruby-head
 matrix:
   allow_failures:
     - rvm: ruby-head
   fast_finish: true
 sudo: required
+env:
+  - ZK_RECIPES_DEBUG=1

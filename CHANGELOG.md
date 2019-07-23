@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+
+- Add support for watching the children of a path: `register_directory`.
+
 ## 0.2.3
 
 - `ZkRecipes::Cache#close!` should not cause exceptions if there are zk events in the zk queue
@@ -17,7 +21,7 @@
 
 This version includes BREAKING CHANGES. See below
 
-- BREAKING CHANGE: rename fetch_existing to fetch_valid, it checks the path
+- BREAKING CHANGE: rename `fetch_existing` to `fetch_valid`, it checks the path
   exists AND the value successfully deserialized.
 - cleanup logging
 - Make `on_connected` lighter: `on_connected` gets called for every watch when
