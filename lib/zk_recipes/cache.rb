@@ -562,7 +562,7 @@ module ZkRecipes
       end
 
       def value
-        @value
+        @mutex.synchronize { @value }
       end
 
       def valid_value
