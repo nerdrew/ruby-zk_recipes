@@ -55,9 +55,14 @@ module ZkRecipes
     # Can only be called before setup_callbacks
     # This method is not threadsafe. All configuration should be done on a single thread.
     #
-    # @param path [String] Path to watch.
-    # @param default_value [Object] Value when the path is not set or there was a deserialization error.
-    # @param deserializer [block] Callable that takes a string and returns the cached value for the path.
+    # @param path [String]
+    #   Path to watch.
+    #
+    # @param default_value [Object]
+    #   Value when the path is not set or there was a deserialization error.
+    #
+    # @param deserializer [block]
+    #   Callable that takes a string and returns the cached value for the path.
     #
     # e.g.:
     #   cache.register("/test/foo", 1) { |raw_value| raw_value.to_i * 2 }
@@ -75,9 +80,14 @@ module ZkRecipes
     # Can only be called before setup_callbacks
     # This method is not threadsafe. All configuration should be done on a single thread.
     #
-    # @param path [String] Path to watch.
-    # @param path_mapper [Callable<String => Object>] Takes a child of the watched directory and returns path to watch.
-    # @param deserializer [block<String => Object>] Takes a string and returns the cached value for the path.
+    # @param path [String]
+    #   Path to watch.
+    #
+    # @param path_mapper [Callable<String => Object>]
+    #   Takes a child of the watched directory and returns path to watch.
+    #
+    # @param deserializer [block<String => Object>]
+    #   Takes a string and returns the cached value for the path.
     #
     # e.g.:
     #   cache.register_directory("/groups/groupA", ->(child) { "/test/#{child}" }) do |raw_value|
@@ -162,6 +172,9 @@ module ZkRecipes
       @zk.on_exception do |e|
         @logger&.error { "on_exception: exception=#{e.inspect} backtrace=#{e.backtrace.inspect}" }
       end
+
+      @static_paths.freeze
+      @directory_paths.freeze
     end
 
     # This method is not threadsafe. All configuration should be done on a single thread.
@@ -209,8 +222,9 @@ module ZkRecipes
     # This method is threadsafe.
     #
     # @param path [String]
-    # @return [Object] The parsed value for `path` or the default value if `path` is not set or there was a
-    # deserialization error.
+    #
+    # @return [Object]
+    #   The parsed value for `path` or the default value if `path` is not set or there was a deserialization error.
     def fetch(path)
       static_path = @static_paths[path]
       raise PathError, "no registered path for #{path.inspect}" unless static_path
@@ -224,7 +238,9 @@ module ZkRecipes
     # This method is threadsafe.
     #
     # @param path [String]
-    # @return [Object] The parsed value for `path` or `nil` if `path` is not set or there was a deserialization error.
+    #
+    # @return [Object]
+    #   The parsed value for `path` or `nil` if `path` is not set or there was a deserialization error.
     def fetch_valid(path)
       static_path = @static_paths[path]
       raise PathError, "no registered path for #{path.inspect}" unless static_path
@@ -236,18 +252,21 @@ module ZkRecipes
     #
     # This method is threadsafe.
     #
-    # @param path [String] The directory path.
-    # @return [Hash<String, Object>] Hash of parsed values for each child's mapped path in the directory.
+    # @param path [String]
+    #   The directory path.
     #
     # Mapped paths that:
     # - don't exist and aren't static registered paths (see `#register`) are not included.
     # - do exist and aren't static registered paths but had deserialization errors are not included.
     # - are static registered paths are included and will be the parsed or default value.
     #
-    # Note: if multiple registered directories have children that map to the same path and that path is not statically
+    # @note: if multiple registered directories have children that map to the same path and that path is not statically
     # registered, each directory's deserializer will be used to parse that path's value.
     #
-    # See {file:examples/cache.rb}.
+    # Example: {file:examples/cache.rb}.
+    #
+    # @return [Hash<String, Object>]
+    #   Hash of parsed values for each child's mapped path in the directory.
     def fetch_directory_values(path)
       directory = @directory_paths[path]
       raise PathError, "no registered path for #{path.inspect}" unless directory
@@ -288,8 +307,8 @@ module ZkRecipes
         # called, and `#setup_callbacks` sets @zk, we know that `#setup_callbacks` has run, @zk is set, and no new paths
         # can be registered.
         @runtime_paths.compute(path) do |directories|
-          directories ||= {}.compare_by_identity
-          directories[directory] = true
+          directories ||= Set.new.compare_by_identity
+          directories << directory
           directories
         end
 
@@ -406,7 +425,7 @@ module ZkRecipes
 
       stat = @zk.stat(path, watch: true)
 
-      directories = @runtime_paths.fetch(path).keys
+      directories = @runtime_paths.fetch(path)
 
       unless stat.exists?
         directories.each { |directory| directory.remove_path!(path) }
@@ -511,17 +530,18 @@ module ZkRecipes
       @logger&.debug { "process_pending_updates: updates=#{@pending_updates.size}" }
       @pending_updates.each do |path, type|
         @logger&.debug { "process_pending_updates: path=#{path} type=#{type}" }
-        delete = case type
-                 when :static
-                   update_static_path(path)
-                 when :runtime
-                   update_runtime_path(path)
-                 when :directory
-                   update_directory_path(path)
-                 else
-                   @logger&.error { "process_pending_updates: unknown pending_update type=#{type.inspect}" }
-                   true
-                 end
+        delete =
+          case type
+          when :static
+            update_static_path(path)
+          when :runtime
+            update_runtime_path(path)
+          when :directory
+            update_directory_path(path)
+          else
+            @logger&.error { "process_pending_updates: unknown pending_update type=#{type.inspect}" }
+            true
+          end
         @pending_updates.delete(path) if delete
       end
 
@@ -542,7 +562,7 @@ module ZkRecipes
       end
 
       def value
-        @mutex.synchronize { @value }
+        @value
       end
 
       def valid_value
@@ -586,13 +606,13 @@ module ZkRecipes
         @path_mapper = path_mapper
         @deserializer = deserializer
 
-        @watched_paths = {}
+        @watched_paths = Set.new
         @paths_with_values = {}
         @stat = nil
       end
 
       def reset_paths!(stat)
-        paths = @watched_paths.keys
+        paths = @watched_paths.to_a
         @mutex.synchronize do
           @watched_paths.clear
           @paths_with_values.clear
@@ -603,26 +623,22 @@ module ZkRecipes
 
       def map_paths(paths, stat)
         @stat = stat
-        watched_paths = {}
-        new_paths = {}
         removed_paths = nil
-        paths = paths.map { |path| @path_mapper.call(path) }
+        added_paths = nil
+        incoming_paths = Set.new(paths.map { |path| @path_mapper.call(path) })
+
         @mutex.synchronize do
-          removed_paths = @watched_paths
-          paths.each do |path|
-            new_paths[path] = true unless removed_paths.delete(path)
-            watched_paths[path] = true
-          end
-          removed_paths.each_key do |path|
-            @paths_with_values.delete(path)
-          end
-          @watched_paths = watched_paths
+          removed_paths = @watched_paths.difference(incoming_paths)
+          added_paths = incoming_paths.difference(@watched_paths)
+
+          @paths_with_values.delete_if { |k, _v| !incoming_paths.include?(k) }
+          @watched_paths = incoming_paths
         end
-        [new_paths.keys, removed_paths.keys]
+        [added_paths, removed_paths]
       end
 
       def paths
-        @mutex.synchronize { @watched_paths.keys }
+        @mutex.synchronize { @watched_paths.to_a }
       end
 
       def values

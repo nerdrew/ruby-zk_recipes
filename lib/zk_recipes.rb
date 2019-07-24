@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "set"
+
 require "active_support/notifications"
 require "concurrent"
 require "zk"
