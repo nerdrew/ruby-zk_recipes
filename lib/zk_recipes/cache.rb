@@ -307,8 +307,9 @@ module ZkRecipes
         # called, and `#setup_callbacks` sets @zk, we know that `#setup_callbacks` has run, @zk is set, and no new paths
         # can be registered.
         @runtime_paths.compute(path) do |directories|
-          directories ||= Set.new.compare_by_identity
-          directories << directory
+          # TODO replace with Set.new.compare_by_identity when jruby-9.1.17.0 support is dropped
+          directories ||= {}.compare_by_identity
+          directories[directory] = true
           directories
         end
 
@@ -425,7 +426,7 @@ module ZkRecipes
 
       stat = @zk.stat(path, watch: true)
 
-      directories = @runtime_paths.fetch(path)
+      directories = @runtime_paths.fetch(path).keys
 
       unless stat.exists?
         directories.each { |directory| directory.remove_path!(path) }
