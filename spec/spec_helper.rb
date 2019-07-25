@@ -122,6 +122,7 @@ RSpec.configure do |config|
     yield
   rescue RSpec::Expectations::ExpectationNotMetError
     raise if retries < 1
+
     sleep 0.1
     retries -= 1
     retry

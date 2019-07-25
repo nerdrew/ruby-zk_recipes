@@ -5,6 +5,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
   let!(:cache) do
     cache = ZkRecipes::Cache.new(logger: logger)
     cache.register("/test/boom", 0, &:to_i)
+    cache.register_directory("/test/group", ->(path) { "/test/#{path}" }) { |raw_value| "#{raw_value}!" }
     cache.setup_callbacks(zk_proxy)
     zk_proxy.connect
     cache.wait_for_warm_cache(timeout)
@@ -53,6 +54,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
     @expected_version ||= 0
     @expected_version += 1
     zk.set("/test/boom", @expected_version.to_s)
+    zk.set("/test/runtime", "runtime #{@expected_version}")
     sleep(rand(0..0.01))
   end
 
@@ -82,6 +84,7 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
       # exit successfully if an update is received
       ActiveSupport::Notifications.subscribe("cache.zk_recipes") do |*|
         next unless zk_cache_exceptions.empty? && zk_exceptions.empty?
+
         logger.debug("child succeeded pid=#{Process.pid}")
         exit!(0)
       end
@@ -103,9 +106,11 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
         i = 0
         loop do
           cache["/test/boom"]
+          cache.fetch_directory_values("/test/group")
           i += 1
           if i % 1_000 == 0
             break if Time.now > stop
+
             Thread.pass if RUBY_ENGINE == "ruby"
           end
         end
@@ -115,6 +120,10 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
 
     sleep(1)
     zk.create("/test/boom", "boom")
+    zk.mkdir_p("/test/group/boom")
+    zk.mkdir_p("/test/group/runtime")
+    zk.mkdir_p("/test/group/unknown")
+    zk.create("/test/runtime", "runtime")
 
     until Time.now > stop
       warn "update_values" if ENV["ZK_RECIPES_DEBUG"]
@@ -143,5 +152,11 @@ RSpec.describe "stress test", zookeeper: true, proxy: true, slow: true do
     warn "versions=#{versions.inspect}"
 
     almost_there { expect(cache["/test/boom"]).to eq(@expected_version) }
+    almost_there do
+      expect(cache.fetch_directory_values("/test/group")).to eq(
+        "/test/boom" => cache["/test/boom"],
+        "/test/runtime" => "runtime #{@expected_version}!",
+      )
+    end
   end
 end

@@ -7,7 +7,7 @@ gem "descriptive_statistics", "~> 2.5"
 gem "pry"
 gem "rake"
 gem "rspec", "~> 3.8"
-gem "rubocop", "0.63.1"
+gem "rubocop", "0.73.0"
 gem 'simplecov'
 gem "zk-server", "~> 1.1"
 
