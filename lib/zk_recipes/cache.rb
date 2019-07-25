@@ -327,11 +327,6 @@ module ZkRecipes
           end
         end
       end
-
-      @zk.defer do
-        @pending_updates.put_if_absent(path, :runtime)
-        @zk.defer(method(:process_pending_updates))
-      end
       nil
     end
 
@@ -340,7 +335,7 @@ module ZkRecipes
     # This method is threadsafe.
     # All accesses in this method need to be race-free.
     def unregister_runtime(path, directory)
-      raise Error, "register_runtime only allowed after setup_callbacks called" unless @zk
+      raise Error, "unregister_runtime only allowed after setup_callbacks called" unless @zk
 
       not_registered = true
 
@@ -482,6 +477,7 @@ module ZkRecipes
       instrument_params[:directory_version] = stat.child_list_version
       instrument_params[:data_length] = stat.data_length
 
+      failed_runtime_fetches = false
       new_paths = nil
       begin
         new_paths, removed_paths = directory.map_paths(raw_child_paths, stat)
@@ -492,6 +488,11 @@ module ZkRecipes
           else
             register_runtime(new_path, directory)
             @logger&.debug { "update_directory_path: path=#{path} has runtime child=#{new_path}" }
+
+            unless update_runtime_path(new_path)
+              @pending_updates.put_if_absent(new_path, :runtime)
+              failed_runtime_fetches = true
+            end
           end
         end
         removed_paths.each do |removed_path|
@@ -504,6 +505,8 @@ module ZkRecipes
         instrument_params[:error] = e
         instrument_params[:raw_child_paths] = raw_child_paths
       end
+
+      @zk.defer(method(:process_pending_updates)) if failed_runtime_fetches
 
       ActiveSupport::Notifications.instrument(AS_NOTIFICATION_DIRECTORY, instrument_params)
       @logger&.debug { "update_directory_path: path=#{path} raw_child_paths=#{raw_child_paths.inspect} paths=#{new_paths} stat=#{stat.inspect}" }
